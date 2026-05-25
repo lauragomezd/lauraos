@@ -137,12 +137,12 @@ def enviar_notificacion(tasks: list):
         msg = MIMEMultipart("alternative")
         msg["Subject"] = f"🧠 LauraOS — {len(vencen_hoy)} tarea(s) vencen hoy, {len(vencidas)} vencida(s)"
         msg["From"]    = origen
-        msg["To"]      = origen
+        msg["To"]      = st.secrets["GMAIL_DESTINO"]
         msg.attach(MIMEText(cuerpo, "html"))
 
         with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
             server.login(origen, password)
-            server.sendmail(origen, origen, msg.as_string())
+            server.sendmail(origen, st.secrets["GMAIL_DESTINO"], msg.as_string())
 
         marcar_envio_hoy()
     except Exception as e:
