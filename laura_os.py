@@ -172,7 +172,7 @@ with tab_chat:
         texto_inicial = st.text_area(
             "¿Qué pasó hoy? ¿Qué quedó pendiente?",
             height=130,
-            placeholder="Ej: Reunión con Giovanni: necesito enviar el charter del Torre de Control esta semana. David va a revisar el presupuesto el viernes."
+            placeholder="Ingresar información"
         )
         if st.button("🚀 Analizar", type="primary", disabled=not texto_inicial.strip()):
             st.session_state.historial     = [{"role": "user", "content": texto_inicial}]
