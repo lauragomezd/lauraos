@@ -402,7 +402,34 @@ with tab_kanban:
 # ════════════════════════════════════════════════════════════
 with tab_manual:
     st.subheader("Agregar tarea manualmente")
-    desc  = st.text_input("📝 Descripción", placeholder="¿Qué hay que hacer?")
+
+    if "form_key" not in st.session_state:
+        st.session_state.form_key = 0
+
+    k = st.session_state.form_key
+    desc  = st.text_input("📝 Descripción", placeholder="¿Qué hay que hacer?", key=f"desc_{k}")
+    c1, c2, c3, c4 = st.columns(4)
+    resp  = c1.text_input("👤 Responsable", value="Laura", key=f"resp_{k}")
+    prio  = c2.selectbox("🚦 Prioridad", ["alta","media","baja"], index=1, key=f"prio_{k}")
+    ctx   = c3.text_input("📁 Contexto", placeholder="Proyecto / área", key=f"ctx_{k}")
+    fecha = c4.date_input("📅 Fecha límite", value=None, key=f"fecha_{k}")
+
+    if st.button("➕ Agregar", type="primary", disabled=not desc.strip()):
+        tasks.append({
+            "id": str(uuid.uuid4()),
+            "descripcion": desc,
+            "responsable": resp,
+            "prioridad": prio,
+            "contexto": ctx,
+            "fecha_limite": fecha.isoformat() if fecha else None,
+            "estado": "pendiente",
+            "creado": datetime.now().isoformat(),
+        })
+        guardar(tasks)
+        st.session_state.tasks = tasks
+        st.session_state.form_key += 1
+        st.success("✅ Tarea agregada")
+        st.rerun()
     c1, c2, c3, c4 = st.columns(4)
     resp  = c1.text_input("👤 Responsable", value="Laura")
     prio  = c2.selectbox("🚦 Prioridad", ["alta","media","baja"], index=1)
