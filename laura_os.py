@@ -4,11 +4,10 @@ Requiere: pip install streamlit groq
 """
 
 import streamlit as st
-import smtplib
+import json, os, uuid, smtplib
+from datetime import datetime, date
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-import json, os, uuid
-from datetime import datetime, date
 from groq import Groq
 
 # ─── CONFIG ───────────────────────────────────────────────────────────────────
@@ -18,58 +17,42 @@ st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap');
 html, body, [class*="css"] { font-family: 'Space Grotesk', sans-serif; }
-
 .task-card {
-    background: #f8f9ff;
-    border: 1px solid #e2e4f0;
-    border-radius: 10px;
-    padding: 14px 16px;
-    margin-bottom: 10px;
+    background: #f8f9ff; border: 1px solid #e2e4f0;
+    border-radius: 10px; padding: 14px 16px; margin-bottom: 10px;
 }
 .task-card.alta  { border-left: 4px solid #e74c3c; }
 .task-card.media { border-left: 4px solid #f39c12; }
 .task-card.baja  { border-left: 4px solid #27ae60; }
 .task-card.done  { opacity: 0.45; }
-
 .badge {
-    display: inline-block;
-    border-radius: 20px;
-    padding: 2px 10px;
-    font-size: 11px;
-    font-weight: 700;
-    margin-right: 4px;
+    display: inline-block; border-radius: 20px;
+    padding: 2px 10px; font-size: 11px; font-weight: 700; margin-right: 4px;
 }
 .badge-alta  { background:#fdecea; color:#c0392b; }
 .badge-media { background:#fef5e7; color:#d68910; }
 .badge-baja  { background:#eafaf1; color:#1e8449; }
-
 .chat-user {
-    background: #4f46e5;
-    color: white;
+    background: #4f46e5; color: white;
     border-radius: 18px 18px 4px 18px;
-    padding: 10px 16px;
-    margin: 6px 0 6px 60px;
-    font-size: 14px;
+    padding: 10px 16px; margin: 6px 0 6px 60px; font-size: 14px;
 }
 .chat-agent {
-    background: #f1f3ff;
-    color: #1a1a2e;
+    background: #f1f3ff; color: #1a1a2e;
     border-radius: 18px 18px 18px 4px;
-    padding: 10px 16px;
-    margin: 6px 60px 6px 0;
-    font-size: 14px;
+    padding: 10px 16px; margin: 6px 60px 6px 0; font-size: 14px;
 }
 .col-header {
     font-size: 12px; font-weight: 700; letter-spacing: 1px;
     text-transform: uppercase; color: #9ca3af;
-    padding-bottom: 8px; border-bottom: 2px solid #e5e7eb;
-    margin-bottom: 12px;
+    padding-bottom: 8px; border-bottom: 2px solid #e5e7eb; margin-bottom: 12px;
 }
 </style>
 """, unsafe_allow_html=True)
 
 # ─── PERSISTENCIA ─────────────────────────────────────────────────────────────
-ARCHIVO = "pendientes.json"
+ARCHIVO      = "pendientes.json"
+ULTIMO_ENVIO = "ultimo_envio.json"
 
 def cargar():
     if os.path.exists(ARCHIVO):
@@ -82,12 +65,9 @@ def guardar(tasks):
     with open(ARCHIVO, "w", encoding="utf-8") as f:
         json.dump(tasks, f, ensure_ascii=False, indent=2)
 
-
 # ─── NOTIFICACIONES EMAIL ──────────────────────────────────────────────────────
 
-ULTIMO_ENVIO = "ultimo_envio.json"
-
-def ya_envio_hoy() -> bool:
+def ya_envio_hoy():
     if os.path.exists(ULTIMO_ENVIO):
         with open(ULTIMO_ENVIO, "r") as f:
             data = json.load(f)
@@ -98,32 +78,28 @@ def marcar_envio_hoy():
     with open(ULTIMO_ENVIO, "w") as f:
         json.dump({"fecha": date.today().isoformat()}, f)
 
-def enviar_notificacion(tasks: list):
+def enviar_notificacion(tasks):
     hoy = date.today()
     vencidas, vencen_hoy = [], []
-
     for t in tasks:
         if t.get("estado") == "hecho": continue
         fl = t.get("fecha_limite")
         if not fl: continue
         try:
             d = date.fromisoformat(fl)
-            if d < hoy:   vencidas.append(t)
+            if d < hoy:    vencidas.append(t)
             elif d == hoy: vencen_hoy.append(t)
         except: pass
 
     if not vencidas and not vencen_hoy:
         return
 
-    # Construir cuerpo del correo
     cuerpo = "<h2>🧠 LauraOS — Resumen del día</h2>"
-
     if vencen_hoy:
         cuerpo += "<h3>📅 Vencen HOY</h3><ul>"
         for t in vencen_hoy:
             cuerpo += f"<li><strong>{t['descripcion']}</strong> · {t.get('contexto','—')} · {t.get('prioridad','').upper()}</li>"
         cuerpo += "</ul>"
-
     if vencidas:
         cuerpo += "<h3>🔴 Vencidas</h3><ul>"
         for t in vencidas:
@@ -133,21 +109,21 @@ def enviar_notificacion(tasks: list):
     try:
         origen   = st.secrets["GMAIL_ORIGEN"]
         password = st.secrets["GMAIL_PASSWORD"]
+        destino  = st.secrets["GMAIL_DESTINO"]
 
         msg = MIMEMultipart("alternative")
-        msg["Subject"] = f"🧠 LauraOS — {len(vencen_hoy)} tarea(s) vencen hoy, {len(vencidas)} vencida(s)"
+        msg["Subject"] = f"🧠 LauraOS — {len(vencen_hoy)} vencen hoy, {len(vencidas)} vencida(s)"
         msg["From"]    = origen
-        msg["To"]      = st.secrets["GMAIL_DESTINO"]
+        msg["To"]      = destino
         msg.attach(MIMEText(cuerpo, "html"))
 
         with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
             server.login(origen, password)
-            server.sendmail(origen, st.secrets["GMAIL_DESTINO"], msg.as_string())
+            server.sendmail(origen, destino, msg.as_string())
 
         marcar_envio_hoy()
     except Exception as e:
-        st.warning(f"No se pudo enviar el correo de notificación: {e}")
-
+        st.warning(f"No se pudo enviar el correo: {e}")
 
 # ─── GROQ ─────────────────────────────────────────────────────────────────────
 
@@ -161,7 +137,7 @@ PROYECTOS ACTUALES DE LAURA:
 5. Pago a proveedores con Gemini — Automatización del proceso de pagos con IA.
 
 REGLAS DE CONTEXTO:
-- Si una tarea menciona nómina, cierre, acta → contexto: "Tercerización Nómina"
+- Si menciona nómina, cierre, acta → contexto: "Tercerización Nómina"
 - Si menciona transporte, vehículos, abastecimiento, Torre de Control → contexto: "Torre de Control"
 - Si menciona subsidios, Power BI, tableros → contexto: "Tableros Subsidios"
 - Si menciona cilindros, intercambiabilidad → contexto: "Intercambiabilidad Cilindros"
@@ -186,7 +162,7 @@ FLUJO:
 7. Habla en español, tono directo y profesional.
 8. Cuando hayas terminado TODAS las tareas del texto, responde exactamente: TODAS_LISTAS"""
 
-def chat_groq(historial: list) -> str:
+def chat_groq(historial):
     client = Groq(api_key=st.secrets["GROQ_API_KEY"])
     resp = client.chat.completions.create(
         model="llama-3.3-70b-versatile",
@@ -195,7 +171,7 @@ def chat_groq(historial: list) -> str:
     )
     return resp.choices[0].message.content.strip()
 
-def parsear_tareas(texto: str) -> list:
+def parsear_tareas(texto):
     tareas = []
     for linea in texto.split("\n"):
         linea = linea.strip()
@@ -203,12 +179,11 @@ def parsear_tareas(texto: str) -> list:
             raw = linea.replace("TAREA_LISTA:", "").strip()
             try:
                 t = json.loads(raw)
-                t["id"] = str(uuid.uuid4())
+                t["id"]     = str(uuid.uuid4())
                 t["estado"] = "pendiente"
                 t["creado"] = datetime.now().isoformat()
                 tareas.append(t)
-            except:
-                pass
+            except: pass
     return tareas
 
 # ─── ESTADO ───────────────────────────────────────────────────────────────────
@@ -216,13 +191,13 @@ if "tasks"         not in st.session_state: st.session_state.tasks         = car
 if "historial"     not in st.session_state: st.session_state.historial     = []
 if "tareas_sesion" not in st.session_state: st.session_state.tareas_sesion = []
 if "chat_activo"   not in st.session_state: st.session_state.chat_activo   = False
+if "form_key"      not in st.session_state: st.session_state.form_key      = 0
 
 tasks = st.session_state.tasks
 
 # Enviar notificación una vez por día si hay tareas urgentes
 if not ya_envio_hoy():
     enviar_notificacion(tasks)
-
 
 # ─── SIDEBAR ──────────────────────────────────────────────────────────────────
 with st.sidebar:
@@ -263,7 +238,7 @@ with tab_chat:
         texto_inicial = st.text_area(
             "¿Qué pasó hoy? ¿Qué quedó pendiente?",
             height=130,
-            placeholder="Ej: Reunión con Giovanni: necesito enviar el charter del Torre de Control esta semana. David va a revisar el presupuesto el viernes."
+            placeholder="Ej: Reunión con Giovanni: necesito enviar el charter del Torre de Control esta semana."
         )
         if st.button("🚀 Analizar", type="primary", disabled=not texto_inicial.strip()):
             st.session_state.historial     = [{"role": "user", "content": texto_inicial}]
@@ -275,19 +250,16 @@ with tab_chat:
             st.session_state.tareas_sesion.extend(parsear_tareas(respuesta))
             st.rerun()
     else:
-        # Renderizar historial
         for msg in st.session_state.historial:
             texto_display = "\n".join(
                 l for l in msg["content"].split("\n")
                 if not l.strip().startswith("TAREA_LISTA:")
                 and l.strip() != "TODAS_LISTAS"
             ).strip()
-            if not texto_display:
-                continue
+            if not texto_display: continue
             css = "chat-user" if msg["role"] == "user" else "chat-agent"
             st.markdown(f'<div class="{css}">{texto_display}</div>', unsafe_allow_html=True)
 
-        # Tareas capturadas
         if st.session_state.tareas_sesion:
             st.success(f"✅ {len(st.session_state.tareas_sesion)} tarea(s) capturada(s)")
             for t in st.session_state.tareas_sesion:
@@ -300,13 +272,9 @@ with tab_chat:
                     unsafe_allow_html=True
                 )
 
-        ultimo = st.session_state.historial[-1]["content"] if st.session_state.historial else ""
-        termino = "TODAS_LISTAS" in ultimo
-
-        if termino:
-            st.info("El agente terminó de procesar todas las tareas.")
+        if st.session_state.tareas_sesion:
             col_g, col_r = st.columns(2)
-            if col_g.button("💾 Guardar todas", type="primary"):
+            if col_g.button("💾 Guardar todas", type="primary", key="btn_guardar"):
                 tasks.extend(st.session_state.tareas_sesion)
                 guardar(tasks)
                 st.session_state.tasks         = tasks
@@ -315,7 +283,7 @@ with tab_chat:
                 st.session_state.chat_activo   = False
                 st.success("¡Guardadas!")
                 st.rerun()
-            if col_r.button("🔄 Nueva sesión"):
+            if col_r.button("🔄 Nueva sesión", key="btn_nueva"):
                 st.session_state.historial     = []
                 st.session_state.tareas_sesion = []
                 st.session_state.chat_activo   = False
@@ -330,7 +298,7 @@ with tab_chat:
                 st.session_state.tareas_sesion.extend(parsear_tareas(respuesta_agente))
                 st.rerun()
 
-            if st.button("❌ Cancelar sesión"):
+            if st.button("❌ Cancelar sesión", key="btn_cancelar"):
                 st.session_state.historial     = []
                 st.session_state.tareas_sesion = []
                 st.session_state.chat_activo   = False
@@ -403,9 +371,6 @@ with tab_kanban:
 with tab_manual:
     st.subheader("Agregar tarea manualmente")
 
-    if "form_key" not in st.session_state:
-        st.session_state.form_key = 0
-
     k = st.session_state.form_key
     desc  = st.text_input("📝 Descripción", placeholder="¿Qué hay que hacer?", key=f"desc_{k}")
     c1, c2, c3, c4 = st.columns(4)
@@ -414,40 +379,19 @@ with tab_manual:
     ctx   = c3.text_input("📁 Contexto", placeholder="Proyecto / área", key=f"ctx_{k}")
     fecha = c4.date_input("📅 Fecha límite", value=None, key=f"fecha_{k}")
 
-    if st.button("➕ Agregar", type="primary", disabled=not desc.strip()):
+    if st.button("➕ Agregar", type="primary", disabled=not desc.strip(), key=f"btn_agregar_{k}"):
         tasks.append({
-            "id": str(uuid.uuid4()),
-            "descripcion": desc,
-            "responsable": resp,
-            "prioridad": prio,
-            "contexto": ctx,
+            "id":           str(uuid.uuid4()),
+            "descripcion":  desc,
+            "responsable":  resp,
+            "prioridad":    prio,
+            "contexto":     ctx,
             "fecha_limite": fecha.isoformat() if fecha else None,
-            "estado": "pendiente",
-            "creado": datetime.now().isoformat(),
+            "estado":       "pendiente",
+            "creado":       datetime.now().isoformat(),
         })
         guardar(tasks)
-        st.session_state.tasks = tasks
+        st.session_state.tasks    = tasks
         st.session_state.form_key += 1
-        st.success("✅ Tarea agregada")
-        st.rerun()
-    c1, c2, c3, c4 = st.columns(4)
-    resp  = c1.text_input("👤 Responsable", value="Laura")
-    prio  = c2.selectbox("🚦 Prioridad", ["alta","media","baja"], index=1)
-    ctx   = c3.text_input("📁 Contexto", placeholder="Proyecto / área")
-    fecha = c4.date_input("📅 Fecha límite", value=None)
-
-    if st.button("➕ Agregar", type="primary", disabled=not desc.strip()):
-        tasks.append({
-            "id": str(uuid.uuid4()),
-            "descripcion": desc,
-            "responsable": resp,
-            "prioridad": prio,
-            "contexto": ctx,
-            "fecha_limite": fecha.isoformat() if fecha else None,
-            "estado": "pendiente",
-            "creado": datetime.now().isoformat(),
-        })
-        guardar(tasks)
-        st.session_state.tasks = tasks
         st.success("✅ Tarea agregada")
         st.rerun()
