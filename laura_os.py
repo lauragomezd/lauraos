@@ -4,6 +4,9 @@ Requiere: pip install streamlit groq
 """
 
 import streamlit as st
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 import json, os, uuid
 from datetime import datetime, date
 from groq import Groq
@@ -79,9 +82,91 @@ def guardar(tasks):
     with open(ARCHIVO, "w", encoding="utf-8") as f:
         json.dump(tasks, f, ensure_ascii=False, indent=2)
 
+
+# ─── NOTIFICACIONES EMAIL ──────────────────────────────────────────────────────
+
+ULTIMO_ENVIO = "ultimo_envio.json"
+
+def ya_envio_hoy() -> bool:
+    if os.path.exists(ULTIMO_ENVIO):
+        with open(ULTIMO_ENVIO, "r") as f:
+            data = json.load(f)
+        return data.get("fecha") == date.today().isoformat()
+    return False
+
+def marcar_envio_hoy():
+    with open(ULTIMO_ENVIO, "w") as f:
+        json.dump({"fecha": date.today().isoformat()}, f)
+
+def enviar_notificacion(tasks: list):
+    hoy = date.today()
+    vencidas, vencen_hoy = [], []
+
+    for t in tasks:
+        if t.get("estado") == "hecho": continue
+        fl = t.get("fecha_limite")
+        if not fl: continue
+        try:
+            d = date.fromisoformat(fl)
+            if d < hoy:   vencidas.append(t)
+            elif d == hoy: vencen_hoy.append(t)
+        except: pass
+
+    if not vencidas and not vencen_hoy:
+        return
+
+    # Construir cuerpo del correo
+    cuerpo = "<h2>🧠 LauraOS — Resumen del día</h2>"
+
+    if vencen_hoy:
+        cuerpo += "<h3>📅 Vencen HOY</h3><ul>"
+        for t in vencen_hoy:
+            cuerpo += f"<li><strong>{t['descripcion']}</strong> · {t.get('contexto','—')} · {t.get('prioridad','').upper()}</li>"
+        cuerpo += "</ul>"
+
+    if vencidas:
+        cuerpo += "<h3>🔴 Vencidas</h3><ul>"
+        for t in vencidas:
+            cuerpo += f"<li><strong>{t['descripcion']}</strong> · venció {t['fecha_limite']} · {t.get('contexto','—')}</li>"
+        cuerpo += "</ul>"
+
+    try:
+        origen   = st.secrets["GMAIL_ORIGEN"]
+        password = st.secrets["GMAIL_PASSWORD"]
+
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = f"🧠 LauraOS — {len(vencen_hoy)} tarea(s) vencen hoy, {len(vencidas)} vencida(s)"
+        msg["From"]    = origen
+        msg["To"]      = origen
+        msg.attach(MIMEText(cuerpo, "html"))
+
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+            server.login(origen, password)
+            server.sendmail(origen, origen, msg.as_string())
+
+        marcar_envio_hoy()
+    except Exception as e:
+        st.warning(f"No se pudo enviar el correo de notificación: {e}")
+
+
 # ─── GROQ ─────────────────────────────────────────────────────────────────────
 
-SYSTEM_AGENTE = """Eres LauraOS, un asistente de gestión de tareas para Laura, que trabaja en Colgas S.A. en Colombia.
+SYSTEM_AGENTE = """Eres LauraOS, un asistente de gestión de tareas para Laura, que trabaja en Colgas S.A. en Colombia en transformación digital y gestión de proyectos TI.
+
+PROYECTOS ACTUALES DE LAURA:
+1. Tercerización de nómina — En cierre. Solo falta agendar reunión de entrega de acta de cierre. Deadline: antes del viernes. Prioridad alta.
+2. Torre de Control de Abastecimiento — Plataforma de monitoreo de transporte operacional. En ejecución.
+3. Tableros Power BI de Subsidios — Dos tableros en desarrollo/mantenimiento.
+4. Intercambiabilidad de cilindros — Proyecto nuevo por iniciar.
+5. Pago a proveedores con Gemini — Automatización del proceso de pagos con IA.
+
+REGLAS DE CONTEXTO:
+- Si una tarea menciona nómina, cierre, acta → contexto: "Tercerización Nómina"
+- Si menciona transporte, vehículos, abastecimiento, Torre de Control → contexto: "Torre de Control"
+- Si menciona subsidios, Power BI, tableros → contexto: "Tableros Subsidios"
+- Si menciona cilindros, intercambiabilidad → contexto: "Intercambiabilidad Cilindros"
+- Si menciona proveedores, pagos, Gemini, facturas, tesorería → contexto: "Pago Proveedores"
+- Si no encaja en ninguno → pregúntale a Laura a qué proyecto pertenece
 
 Tu trabajo es ayudar a Laura a registrar tareas de forma completa. Cada tarea necesita:
 - descripcion: qué hay que hacer (obligatorio)
@@ -92,13 +177,14 @@ Tu trabajo es ayudar a Laura a registrar tareas de forma completa. Cada tarea ne
 
 FLUJO:
 1. Cuando Laura te dé un texto, extrae todas las tareas que puedas.
-2. Para cada tarea con campos incompletos, pregúntale exactamente lo que falta. Una sola pregunta clara a la vez.
-3. Cuando una tarea esté completa, responde con un bloque JSON así (en una línea):
+2. Asigna el contexto automáticamente según las reglas de arriba cuando sea obvio.
+3. Para cada tarea con campos incompletos, pregúntale exactamente lo que falta. Una sola pregunta clara a la vez.
+4. Cuando una tarea esté completa, responde con un bloque JSON así (en una línea):
    TAREA_LISTA: {"descripcion":"...","responsable":"...","fecha_limite":"...","prioridad":"...","contexto":"..."}
-4. Si hay varias tareas, trabájalas una por una.
-5. Si ya tienes todo el contexto necesario, no preguntes de más.
-6. Habla en español, tono directo y profesional.
-7. Cuando hayas terminado TODAS las tareas del texto, responde exactamente: TODAS_LISTAS"""
+5. Si hay varias tareas, trabájalas una por una.
+6. Si ya tienes todo el contexto necesario, no preguntes de más.
+7. Habla en español, tono directo y profesional.
+8. Cuando hayas terminado TODAS las tareas del texto, responde exactamente: TODAS_LISTAS"""
 
 def chat_groq(historial: list) -> str:
     client = Groq(api_key=st.secrets["GROQ_API_KEY"])
@@ -132,6 +218,11 @@ if "tareas_sesion" not in st.session_state: st.session_state.tareas_sesion = []
 if "chat_activo"   not in st.session_state: st.session_state.chat_activo   = False
 
 tasks = st.session_state.tasks
+
+# Enviar notificación una vez por día si hay tareas urgentes
+if not ya_envio_hoy():
+    enviar_notificacion(tasks)
+
 
 # ─── SIDEBAR ──────────────────────────────────────────────────────────────────
 with st.sidebar:
@@ -172,7 +263,7 @@ with tab_chat:
         texto_inicial = st.text_area(
             "¿Qué pasó hoy? ¿Qué quedó pendiente?",
             height=130,
-            placeholder="Ingresar información"
+            placeholder="Ej: Reunión con Giovanni: necesito enviar el charter del Torre de Control esta semana. David va a revisar el presupuesto el viernes."
         )
         if st.button("🚀 Analizar", type="primary", disabled=not texto_inicial.strip()):
             st.session_state.historial     = [{"role": "user", "content": texto_inicial}]
@@ -212,7 +303,7 @@ with tab_chat:
         ultimo = st.session_state.historial[-1]["content"] if st.session_state.historial else ""
         termino = "TODAS_LISTAS" in ultimo
 
-        if st.session_state.tareas_sesion:
+        if termino:
             st.info("El agente terminó de procesar todas las tareas.")
             col_g, col_r = st.columns(2)
             if col_g.button("💾 Guardar todas", type="primary"):
